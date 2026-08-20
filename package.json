@@ -4,6 +4,7 @@
   "description": "Karnataka RERA Chatbot — scrapes rera.karnataka.gov.in, serves answers via a chatbot UI",
   "main": "server.js",
   "scripts": {
+    "start": "node server.js",
     "dev": "node server.js",
     "crawl": "node scraper/crawlJob.js",
     "crawl:test": "node scraper/crawlJob.js --test",

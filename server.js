@@ -305,7 +305,7 @@ async function handleLiveVerify(regNo) {
 /*  Start                                                              */
 /* ------------------------------------------------------------------ */
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   const total = db.getTotalProjectCount();
   const lastCrawl = db.getLastSuccessfulCrawl();
 
