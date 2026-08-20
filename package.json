@@ -1,0 +1,22 @@
+{
+  "name": "karnataka-rera-chatbot",
+  "version": "1.0.0",
+  "description": "Karnataka RERA Chatbot — scrapes rera.karnataka.gov.in, serves answers via a chatbot UI",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node server.js",
+    "crawl": "node scraper/crawlJob.js",
+    "crawl:test": "node scraper/crawlJob.js --test",
+    "install:browsers": "npx playwright install chromium"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "cheerio": "^1.2.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "playwright": "^1.48.0"
+  },
+  "allowScripts": {
+    "better-sqlite3@11.10.0": true
+  }
+}
