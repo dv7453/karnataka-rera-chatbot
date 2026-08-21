@@ -54,6 +54,15 @@ function initTables() {
     CREATE INDEX IF NOT EXISTS idx_taluk          ON projects(taluk COLLATE NOCASE);
     CREATE INDEX IF NOT EXISTS idx_status         ON projects(status COLLATE NOCASE);
     CREATE INDEX IF NOT EXISTS idx_rera_reg       ON projects(rera_reg_no);
+
+    CREATE TABLE IF NOT EXISTS project_embeddings (
+      project_id INTEGER PRIMARY KEY,
+      doc_text   TEXT NOT NULL,
+      embedding  BLOB NOT NULL,
+      model      TEXT NOT NULL,
+      dim        INTEGER NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id)
+    );
   `);
 }
 
@@ -122,34 +131,15 @@ function searchByPromoter(name, limit = 20) {
 }
 
 function searchByDistrict(district, limit = 30, extraTerms = []) {
-  const d = getDb();
-  const terms = [...new Set(
-    [district, ...(Array.isArray(extraTerms) ? extraTerms : [])]
-      .map((t) => String(t || '').trim())
-      .filter((t) => t.length >= 3)
-  )];
-
+  const { terms, clauses, params } = districtWhere(district, extraTerms);
   if (terms.length === 0) return [];
-
-  /* Seed data has empty district columns, so also match name fields. */
-  const clauses = [];
-  const params = [];
-  for (const term of terms) {
-    clauses.push(`district LIKE '%' || ? || '%' COLLATE NOCASE`);
-    params.push(term);
-    clauses.push(`project_name LIKE '%' || ? || '%' COLLATE NOCASE`);
-    params.push(term);
-    clauses.push(`promoter_name LIKE '%' || ? || '%' COLLATE NOCASE`);
-    params.push(term);
-  }
-  params.push(limit);
-
+  const d = getDb();
   return d.prepare(`
     SELECT * FROM projects
     WHERE ${clauses.join(' OR ')}
     ORDER BY updated_at DESC
     LIMIT ?
-  `).all(...params);
+  `).all(...params, limit);
 }
 
 function searchByRegNo(regNo) {
@@ -188,6 +178,113 @@ function generalSearch(query, limit = 20) {
 function getProjectByRegNo(regNo) {
   const d = getDb();
   return d.prepare(`SELECT * FROM projects WHERE rera_reg_no = ?`).get(regNo);
+}
+
+function getAllProjects() {
+  const d = getDb();
+  return d.prepare(`SELECT * FROM projects ORDER BY id`).all();
+}
+
+function getProjectsByIds(ids) {
+  if (!ids || ids.length === 0) return [];
+  const d = getDb();
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = d.prepare(`SELECT * FROM projects WHERE id IN (${placeholders})`).all(...ids);
+  const map = new Map(rows.map((r) => [r.id, r]));
+  return ids.map((id) => map.get(id)).filter(Boolean);
+}
+
+function districtWhere(district, extraTerms = []) {
+  const terms = [...new Set(
+    [district, ...(Array.isArray(extraTerms) ? extraTerms : [])]
+      .map((t) => String(t || '').trim())
+      .filter((t) => t.length >= 3)
+  )];
+
+  const clauses = [];
+  const params = [];
+  for (const term of terms) {
+    clauses.push(`district LIKE '%' || ? || '%' COLLATE NOCASE`);
+    params.push(term);
+    clauses.push(`project_name LIKE '%' || ? || '%' COLLATE NOCASE`);
+    params.push(term);
+    clauses.push(`promoter_name LIKE '%' || ? || '%' COLLATE NOCASE`);
+    params.push(term);
+  }
+  return { terms, clauses, params };
+}
+
+function countByProjectName(name) {
+  const d = getDb();
+  return d.prepare(`
+    SELECT COUNT(*) AS count FROM projects
+    WHERE project_name LIKE '%' || ? || '%' COLLATE NOCASE
+  `).get(name).count;
+}
+
+function countByPromoter(name) {
+  const d = getDb();
+  return d.prepare(`
+    SELECT COUNT(*) AS count FROM projects
+    WHERE promoter_name LIKE '%' || ? || '%' COLLATE NOCASE
+  `).get(name).count;
+}
+
+function countByDistrict(district, extraTerms = []) {
+  const { terms, clauses, params } = districtWhere(district, extraTerms);
+  if (terms.length === 0) return 0;
+  const d = getDb();
+  return d.prepare(`SELECT COUNT(*) AS count FROM projects WHERE ${clauses.join(' OR ')}`).get(...params).count;
+}
+
+function countByStatus(status) {
+  const d = getDb();
+  return d.prepare(`
+    SELECT COUNT(*) AS count FROM projects
+    WHERE status LIKE '%' || ? || '%' COLLATE NOCASE
+  `).get(status).count;
+}
+
+function countGeneralSearch(query) {
+  const d = getDb();
+  return d.prepare(`
+    SELECT COUNT(*) AS count FROM projects
+    WHERE project_name  LIKE '%' || ? || '%' COLLATE NOCASE
+       OR promoter_name LIKE '%' || ? || '%' COLLATE NOCASE
+       OR rera_reg_no   LIKE '%' || ? || '%' COLLATE NOCASE
+       OR district      LIKE '%' || ? || '%' COLLATE NOCASE
+  `).get(query, query, query, query).count;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Embeddings                                                         */
+/* ------------------------------------------------------------------ */
+
+function replaceEmbeddings(rows) {
+  const d = getDb();
+  const stmt = d.prepare(`
+    INSERT INTO project_embeddings (project_id, doc_text, embedding, model, dim)
+    VALUES (@project_id, @doc_text, @embedding, @model, @dim)
+    ON CONFLICT(project_id) DO UPDATE SET
+      doc_text  = excluded.doc_text,
+      embedding = excluded.embedding,
+      model     = excluded.model,
+      dim       = excluded.dim
+  `);
+  const tx = d.transaction((batch) => {
+    for (const row of batch) stmt.run(row);
+  });
+  tx(rows);
+}
+
+function getAllEmbeddings() {
+  const d = getDb();
+  return d.prepare(`SELECT project_id, embedding, dim, model FROM project_embeddings`).all();
+}
+
+function getEmbeddingCount() {
+  const d = getDb();
+  return d.prepare(`SELECT COUNT(*) AS count FROM project_embeddings`).get().count;
 }
 
 function getTotalProjectCount() {
@@ -285,6 +382,16 @@ module.exports = {
   searchByStatus,
   generalSearch,
   getProjectByRegNo,
+  getAllProjects,
+  getProjectsByIds,
+  countByProjectName,
+  countByPromoter,
+  countByDistrict,
+  countByStatus,
+  countGeneralSearch,
+  replaceEmbeddings,
+  getAllEmbeddings,
+  getEmbeddingCount,
   getTotalProjectCount,
   getDistinctDistricts,
   getStatusBreakdown,

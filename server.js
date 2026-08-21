@@ -10,12 +10,17 @@
  * VERIFY_REGISTRATION, which live-scrapes a single reg-no from the portal.
  */
 
+const { loadEnv }  = require('./chatbot/loadEnv');
+loadEnv();
+
 const express  = require('express');
 const cors     = require('cors');
 const path     = require('path');
 const db          = require('./db/database');
 const parser      = require('./chatbot/queryParser');
+const groqIntent  = require('./chatbot/groqIntent');
 const httpScraper = require('./scraper/httpScraper');
+const retrieve    = require('./rag/retrieve');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -58,13 +63,21 @@ app.post('/api/chat', rateLimit, async (req, res) => {
       return res.json({ reply: "Please type a message to search for RERA project information.", type: 'text' });
     }
 
-    const { intent, params } = parser.parseQuery(message.trim());
+    const rawMessage = message.trim();
+    const groqClass = await groqIntent.classifyIntent(rawMessage);
+    const parsed = groqIntent.toParserResult(groqClass, rawMessage)
+      || parser.parseQuery(rawMessage);
+    const { intent, params } = parsed;
 
     let reply;
 
     switch (intent) {
       case 'GREETING':
         reply = buildGreeting();
+        break;
+
+      case 'OFF_TOPIC':
+        reply = buildRoleReply();
         break;
 
       case 'HELP':
@@ -76,31 +89,16 @@ app.post('/api/chat', rateLimit, async (req, res) => {
         break;
 
       case 'SEARCH_PROJECT':
-        reply = buildSearchResult('project_name', params.projectName, db.searchByProjectName(params.projectName));
-        break;
-
       case 'SEARCH_PROMOTER':
-        reply = buildSearchResult('promoter', params.firmName, db.searchByPromoter(params.firmName));
-        break;
-
       case 'SEARCH_DISTRICT':
-        reply = buildSearchResult(
-          'district',
-          params.district,
-          db.searchByDistrict(params.district, 30, params.searchTerms)
-        );
-        break;
-
       case 'SEARCH_STATUS':
-        reply = buildSearchResult('status', params.status, db.searchByStatus(params.status));
+      case 'GENERAL_SEARCH':
+      case 'UNKNOWN':
+        reply = await handleHybridSearch(intent, params, rawMessage);
         break;
 
       case 'VERIFY_REGISTRATION':
         reply = await handleLiveVerify(params.regNo);
-        break;
-
-      case 'GENERAL_SEARCH':
-        reply = buildSearchResult('query', params.query, db.generalSearch(params.query));
         break;
 
       default:
@@ -134,6 +132,8 @@ app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
     totalProjects,
+    embeddings: db.getEmbeddingCount(),
+    groqIntent: groqIntent.groqEnabled(),
     lastCrawl: lastCrawl ? {
       completedAt: lastCrawl.completed_at,
       projectsFound: lastCrawl.projects_found,
@@ -166,6 +166,13 @@ function buildGreeting() {
   return {
     type: 'text',
     text: `👋 **Hello! I'm the Karnataka RERA Assistant.**\n\nI can help you look up real estate project information from the Karnataka RERA portal.\n\n📊 **${total.toLocaleString()}** projects in database\n📅 ${dataInfo}\n\nTry asking me things like:\n• *"Search for Prestige projects"*\n• *"Projects by Sobha Limited"*\n• *"Show projects in Bangalore"*\n• *"Verify PRM/KA/RERA/1251/..."*\n\nType **help** for all commands.`,
+  };
+}
+
+function buildRoleReply() {
+  return {
+    type: 'text',
+    text: `I'm the **Karnataka RERA Assistant**. I only look up real-estate projects registered with Karnataka RERA — project name, promoter/builder, registration number, and status.\n\nI can't help with other topics.\n\nTry:\n• *"Search for Prestige projects"*\n• *"hi is there any Prestige projects?"*\n• *"Projects by Sobha"*\n• *"Whitefield"*\n• a registration number like \`PRM/KA/RERA/...\`\n\nType **help** for more examples.`,
   };
 }
 
@@ -210,11 +217,37 @@ function buildStats() {
   return { type: 'text', text };
 }
 
-function buildSearchResult(searchType, searchValue, results) {
-  if (!results || results.length === 0) {
-    const total = db.getTotalProjectCount();
+function searchTypeForIntent(intent) {
+  switch (intent) {
+    case 'SEARCH_PROJECT':  return 'project_name';
+    case 'SEARCH_PROMOTER': return 'promoter';
+    case 'SEARCH_DISTRICT': return 'district';
+    case 'SEARCH_STATUS':   return 'status';
+    default:                return 'query';
+  }
+}
+
+function templateShortAnswer(searchValue, projects) {
+  if (projects.length === 1) {
+    const p = projects[0];
+    return `**${p.project_name}** is listed as **${p.status}**. Promoter: **${p.promoter_name}**. Registration: \`${p.rera_reg_no}\`.`;
+  }
+  return `Found **${projects.length}** projects matching **"${searchValue}"**:`;
+}
+
+async function handleHybridSearch(intent, params, rawMessage) {
+  const { term, total, rows } = await retrieve.hybridSearch(intent, params, rawMessage);
+  return buildSearchResult(searchTypeForIntent(intent), term, rows, total);
+}
+
+function buildSearchResult(searchType, searchValue, results, totalOverride) {
+  const list = results || [];
+  const total = totalOverride != null ? totalOverride : list.length;
+
+  if (list.length === 0) {
+    const dbTotal = db.getTotalProjectCount();
     let hint = '';
-    if (total === 0) {
+    if (dbTotal === 0) {
       hint = '\n\n⚠️ The database is empty. Run `npm run crawl` to populate it first.';
     }
     return {
@@ -223,10 +256,27 @@ function buildSearchResult(searchType, searchValue, results) {
     };
   }
 
+  const formatted = list.map(formatProject);
+
+  if (formatted.length <= retrieve.CHAT_CARD_MAX) {
+    return {
+      type: 'projects',
+      text: templateShortAnswer(searchValue, formatted),
+      projects: formatted,
+      searchType,
+      searchValue,
+      total,
+    };
+  }
+
+  const displayed = formatted.slice(0, retrieve.SHEET_DISPLAY_MAX);
   return {
-    type: 'projects',
-    text: `🔍 Found **${results.length}** project${results.length > 1 ? 's' : ''} matching **"${searchValue}"**:`,
-    projects: results.map(formatProject),
+    type: 'projects_table',
+    text: `Found **${total.toLocaleString()}** projects matching **"${searchValue}"**. Opened in the sheet.`,
+    projects: displayed,
+    download: formatted,
+    total,
+    displayed: displayed.length,
     searchType,
     searchValue,
   };
@@ -312,6 +362,8 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🏗️  Karnataka RERA Chatbot Server`);
   console.log(`   http://localhost:${PORT}`);
   console.log(`   📊 ${total} projects in database`);
+  console.log(`   🧠 ${db.getEmbeddingCount()} embeddings`);
+  console.log(`   🤖 Groq intent: ${groqIntent.groqEnabled() ? 'on' : 'off (set GROQ_API_KEY in .env)'}`);
   if (lastCrawl) {
     console.log(`   📅 Last crawl: ${lastCrawl.completed_at}`);
   } else {

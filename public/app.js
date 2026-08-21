@@ -9,6 +9,17 @@ const sendBtn = document.getElementById('send-btn');
 const typingIndicator = document.getElementById('typing-indicator');
 const dataBadge = document.getElementById('data-badge');
 const dataBadgeText = document.getElementById('data-badge-text');
+const sheetPanel = document.getElementById('sheet-panel');
+const workspace = document.getElementById('workspace');
+const sheetTitle = document.getElementById('sheet-title');
+const sheetCount = document.getElementById('sheet-count');
+const sheetBody = document.getElementById('sheet-body');
+const sheetDownloadBtn = document.getElementById('sheet-download');
+const sheetCloseBtn = document.getElementById('sheet-close');
+
+let sheetDownloadRows = [];
+const sheetHistory = new Map();
+let sheetSeq = 0;
 
 /* ------------------------------------------------------------------ */
 /*  Init                                                               */
@@ -28,6 +39,17 @@ chatInput.addEventListener('keydown', (e) => {
 });
 
 sendBtn.addEventListener('click', sendMessage);
+sheetCloseBtn.addEventListener('click', closeSheet);
+sheetDownloadBtn.addEventListener('click', downloadSheetCsv);
+chatArea.addEventListener('click', (e) => {
+  const btn = e.target.closest('.view-csv-btn');
+  if (!btn) return;
+  const saved = sheetHistory.get(btn.dataset.sheetId);
+  if (saved) openSheet(saved);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeSheet();
+});
 
 /* ------------------------------------------------------------------ */
 /*  Health / Data freshness                                            */
@@ -144,18 +166,27 @@ function quickAction(text) {
 function renderReply(reply) {
   switch (reply.type) {
     case 'text':
+      closeSheet();
       addMessage('bot', formatMarkdown(reply.text));
       break;
 
     case 'projects':
+      closeSheet();
       renderProjectResults(reply);
       break;
 
+    case 'projects_table':
+      renderTableNotice(reply);
+      openSheet(reply);
+      break;
+
     case 'verify':
+      closeSheet();
       renderVerifyResult(reply);
       break;
 
     default:
+      closeSheet();
       addMessage('bot', formatMarkdown(reply.text || 'No response.'));
   }
 }
@@ -169,14 +200,83 @@ function renderProjectResults(reply) {
   }
 
   html += `</div>`;
+  addMessage('bot', html, true);
+}
 
-  if (reply.projects.length >= 20) {
-    html += `<div style="margin-top:8px; font-size:12px; color:var(--text-muted);">
-      Showing first 20 results. Try a more specific search to narrow down.
-    </div>`;
+function renderTableNotice(reply) {
+  const id = 'sheet-' + (++sheetSeq);
+  sheetHistory.set(id, reply);
+  const html = `
+    <div>${formatMarkdown(reply.text)}</div>
+    <button type="button" class="view-csv-btn" data-sheet-id="${id}">View CSV</button>
+  `;
+  addMessage('bot', html, true);
+}
+
+function openSheet(reply) {
+  const rows = Array.isArray(reply.projects) ? reply.projects : [];
+  sheetDownloadRows = Array.isArray(reply.download) && reply.download.length
+    ? reply.download
+    : rows;
+
+  const total = reply.total || sheetDownloadRows.length;
+  const shown = rows.length;
+  sheetTitle.textContent = reply.searchValue
+    ? `Results for “${reply.searchValue}”`
+    : 'Results';
+  sheetCount.textContent = shown < total
+    ? `Showing ${shown.toLocaleString()} of ${total.toLocaleString()} projects`
+    : `${total.toLocaleString()} projects`;
+
+  sheetBody.innerHTML = rows.map((project) => {
+    const statusClass = getStatusClass(project.status);
+    return `<tr>
+      <td>${escapeHtml(project.project_name)}</td>
+      <td>${escapeHtml(project.promoter_name)}</td>
+      <td>${escapeHtml(project.rera_reg_no)}</td>
+      <td><span class="sheet-status ${statusClass}">${escapeHtml(project.status)}</span></td>
+    </tr>`;
+  }).join('');
+
+  sheetPanel.hidden = false;
+  workspace.classList.add('sheet-open');
+}
+
+function closeSheet() {
+  workspace.classList.remove('sheet-open');
+}
+
+function csvEscape(value) {
+  const text = String(value == null || value === '—' ? '' : value);
+  if (/[",\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+function downloadSheetCsv() {
+  const rows = sheetDownloadRows;
+  if (!rows.length) return;
+
+  const header = ['Project', 'Promoter', 'Reg No', 'Status'];
+  const lines = [header.join(',')];
+  for (const p of rows) {
+    lines.push([
+      csvEscape(p.project_name),
+      csvEscape(p.promoter_name),
+      csvEscape(p.rera_reg_no),
+      csvEscape(p.status),
+    ].join(','));
   }
 
-  addMessage('bot', html, true);
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const stamp = new Date().toISOString().slice(0, 10);
+  a.href = url;
+  a.download = `rera-results-${stamp}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 function renderVerifyResult(reply) {

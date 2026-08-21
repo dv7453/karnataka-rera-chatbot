@@ -91,8 +91,9 @@ function parseQuery(message) {
   const raw = message.trim();
   const lower = raw.toLowerCase();
 
-  /* ---- Greeting -------------------------------------------------- */
-  if (/^(hi|hello|hey|greetings|good\s*(morning|afternoon|evening)|namaste)\b/i.test(lower)) {
+  /* ---- Greeting (only when the message is just a hello) --------- */
+  const greetingOnly = /^(hi|hello|hey|greetings|good\s*(morning|afternoon|evening)|namaste)\b[\s,.!]*$/i;
+  if (greetingOnly.test(lower)) {
     return { intent: 'GREETING', params: {}, raw };
   }
 

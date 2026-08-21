@@ -6,5 +6,7 @@ node_modules/
 debug_page.html
 .env
 .env.*
+!.env.example
 .DS_Store
 *.log
+.cache/

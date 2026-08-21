@@ -99,13 +99,16 @@ body::after {
 .app {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  height: 100dvh;
+  height: 100%;
   position: relative;
   z-index: 1;
+  flex: 1 1 auto;
+  min-width: 0;
   max-width: 900px;
+  width: 100%;
   margin: 0 auto;
   padding: 16px 16px 0;
+  transition: max-width 0.25s ease;
 }
 
 /* ------------------------------------------------------------------ */
@@ -707,6 +710,172 @@ body::after {
 /* ------------------------------------------------------------------ */
 /*  Utilities                                                          */
 /* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/*  Workspace: chat + right sheet                                      */
+/* ------------------------------------------------------------------ */
+
+.workspace {
+  display: flex;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+}
+
+.workspace.sheet-open .app {
+  max-width: none;
+  margin: 0;
+  flex: 1 1 48%;
+}
+
+.workspace.sheet-open .sheet-panel {
+  display: flex;
+}
+
+.view-csv-btn {
+  margin-top: 10px;
+  padding: 6px 14px;
+  border-radius: 100px;
+  border: 1px solid var(--border-glass);
+  background: var(--bg-glass);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.view-csv-btn:hover {
+  background: var(--bg-glass-hover);
+  border-color: rgba(102, 126, 234, 0.35);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Right spreadsheet panel                                            */
+/* ------------------------------------------------------------------ */
+
+.sheet-panel {
+  display: none;
+  flex: 1 1 52%;
+  min-width: 0;
+  max-width: 760px;
+  height: 100%;
+  background: #0c0c18;
+  border-left: 1px solid var(--border-glass);
+  flex-direction: column;
+  animation: sheetIn 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes sheetIn {
+  from { transform: translateX(16px); opacity: 0.4; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+
+.sheet-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border-glass);
+  background: var(--bg-glass);
+}
+
+.sheet-header-text h2 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.sheet-count {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.sheet-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.sheet-btn {
+  padding: 7px 12px;
+  border-radius: 100px;
+  border: 1px solid transparent;
+  background: var(--accent-gradient);
+  color: #fff;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sheet-btn-ghost {
+  background: var(--bg-glass);
+  border-color: var(--border-glass);
+  color: var(--text-secondary);
+}
+
+.sheet-btn:hover {
+  opacity: 0.9;
+}
+
+.sheet-table-wrap {
+  flex: 1;
+  overflow: auto;
+}
+
+.sheet-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.sheet-table th {
+  position: sticky;
+  top: 0;
+  background: #12121f;
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-glass);
+  white-space: nowrap;
+}
+
+.sheet-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  vertical-align: top;
+}
+
+.sheet-table tbody tr:hover td {
+  background: var(--bg-glass-hover);
+}
+
+.sheet-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+@media (max-width: 800px) {
+  .workspace.sheet-open {
+    flex-direction: column;
+  }
+
+  .sheet-panel {
+    max-width: none;
+    flex: 0 0 46%;
+    border-left: none;
+    border-top: 1px solid var(--border-glass);
+  }
+}
 
 .sr-only {
   position: absolute;

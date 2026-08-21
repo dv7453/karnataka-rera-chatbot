@@ -10,6 +10,8 @@
 </head>
 <body>
 
+<div class="workspace" id="workspace">
+
 <div class="app" id="app">
 
   <!-- ============================================================ -->
@@ -65,6 +67,34 @@
       </button>
     </div>
   </div>
+
+</div>
+
+<aside id="sheet-panel" class="sheet-panel" aria-label="Results sheet">
+  <header class="sheet-header">
+    <div class="sheet-header-text">
+      <h2 id="sheet-title">Results</h2>
+      <p id="sheet-count" class="sheet-count"></p>
+    </div>
+    <div class="sheet-actions">
+      <button type="button" id="sheet-download" class="sheet-btn">Download CSV</button>
+      <button type="button" id="sheet-close" class="sheet-btn sheet-btn-ghost" aria-label="Close sheet">Close</button>
+    </div>
+  </header>
+  <div class="sheet-table-wrap">
+    <table class="sheet-table">
+      <thead>
+        <tr>
+          <th>Project</th>
+          <th>Promoter</th>
+          <th>Reg No</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="sheet-body"></tbody>
+    </table>
+  </div>
+</aside>
 
 </div>
 
