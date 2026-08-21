@@ -114,6 +114,22 @@ function rrfMerge(listA, listB, limit, k = RRF_K) {
 }
 
 function likeSearch(intent, params) {
+  const place = params.place;
+  const brand = params.projectName || params.firmName || '';
+
+  if (place && intent !== 'SEARCH_STATUS') {
+    const extraQuery = params.query
+      && params.query !== params.raw
+      && params.query.toLowerCase() !== String(place).toLowerCase()
+      ? params.query
+      : '';
+    const brandTerm = brand || extraQuery;
+    const rows = db.searchWithFilters({ brand: brandTerm, place }, DOWNLOAD_MAX);
+    const total = db.countWithFilters({ brand: brandTerm, place });
+    const term = brandTerm ? `${brandTerm} in ${place}` : place;
+    return { rows, total, term, strict: true };
+  }
+
   switch (intent) {
     case 'SEARCH_PROJECT':
       return {
@@ -164,13 +180,24 @@ function searchTerm(intent, params, rawMessage) {
 
 async function hybridSearch(intent, params, rawMessage) {
   const term = searchTerm(intent, params, rawMessage);
-  const like = likeSearch(intent, { ...params, query: params.query || rawMessage, raw: rawMessage });
+  const like = likeSearch(intent, { ...params, raw: rawMessage });
 
   let vectorRows = [];
   try {
     vectorRows = await vectorSearch(term, VECTOR_TOP_K);
   } catch (err) {
     console.warn('[rag] vector search skipped:', err.message);
+  }
+
+  if (like.strict) {
+    const likeIds = new Set(like.rows.map((r) => r.id));
+    const overlapping = vectorRows.filter((r) => likeIds.has(r.id));
+    const merged = like.rows.length ? rrfMerge(like.rows, overlapping, DOWNLOAD_MAX) : [];
+    return {
+      term: like.term,
+      total: like.total,
+      rows: merged,
+    };
   }
 
   if (like.total > 0 && like.rows.length > 0) {

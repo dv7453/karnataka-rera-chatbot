@@ -1,5 +1,6 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const { placeVariants } = require('../chatbot/places');
 
 const DB_PATH = path.join(__dirname, '..', 'rera_data.db');
 
@@ -245,6 +246,61 @@ function countByStatus(status) {
   `).get(status).count;
 }
 
+function fieldMatchSql() {
+  return `(
+    project_name LIKE '%' || ? || '%' COLLATE NOCASE
+    OR promoter_name LIKE '%' || ? || '%' COLLATE NOCASE
+    OR district LIKE '%' || ? || '%' COLLATE NOCASE
+    OR taluk LIKE '%' || ? || '%' COLLATE NOCASE
+  )`;
+}
+
+function searchWithFilters({ brand, place } = {}, limit = 1000) {
+  const { sql, params } = filterWhere({ brand, place });
+  if (!sql) return [];
+  const d = getDb();
+  return d.prepare(`
+    SELECT * FROM projects
+    WHERE ${sql}
+    ORDER BY updated_at DESC
+    LIMIT ?
+  `).all(...params, limit);
+}
+
+function countWithFilters({ brand, place } = {}) {
+  const { sql, params } = filterWhere({ brand, place });
+  if (!sql) return 0;
+  const d = getDb();
+  return d.prepare(`SELECT COUNT(*) AS count FROM projects WHERE ${sql}`).get(...params).count;
+}
+
+function filterWhere({ brand, place } = {}) {
+  const clauses = [];
+  const params = [];
+  const brandTerm = String(brand || '').trim();
+  const variants = placeVariants(place);
+
+  if (brandTerm.length >= 2) {
+    clauses.push(`(
+      project_name LIKE '%' || ? || '%' COLLATE NOCASE
+      OR promoter_name LIKE '%' || ? || '%' COLLATE NOCASE
+    )`);
+    params.push(brandTerm, brandTerm);
+  }
+
+  if (variants.length > 0) {
+    const orPlace = [];
+    for (const term of variants) {
+      orPlace.push(fieldMatchSql());
+      params.push(term, term, term, term);
+    }
+    clauses.push(`(${orPlace.join(' OR ')})`);
+  }
+
+  if (clauses.length === 0) return { sql: '', params: [] };
+  return { sql: clauses.join(' AND '), params };
+}
+
 function countGeneralSearch(query) {
   const d = getDb();
   return d.prepare(`
@@ -389,6 +445,8 @@ module.exports = {
   countByDistrict,
   countByStatus,
   countGeneralSearch,
+  searchWithFilters,
+  countWithFilters,
   replaceEmbeddings,
   getAllEmbeddings,
   getEmbeddingCount,

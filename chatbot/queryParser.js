@@ -16,6 +16,8 @@
  *   GENERAL_SEARCH        anything else with enough tokens      { query }
  */
 
+const { inferPlace, placeVariants } = require('./places');
+
 /* ------------------------------------------------------------------ */
 /*  Karnataka districts for fuzzy matching                             */
 /* ------------------------------------------------------------------ */
@@ -214,8 +216,23 @@ function matchDistrict(text) {
 /*  Strip filler verbs/nouns from extracted search terms               */
 /* ------------------------------------------------------------------ */
 
-const LEADING_FILLERS  = /^(the|a|an|called|named|for|me|all|some|any|please|search|find|show|list|get|look\s*up|lookup|projects?|listings?)\s+/i;
+const LEADING_FILLERS  = /^(the|a|an|called|named|for|me|all|some|any|please|search|find|show|list|get|look\s*up|lookup|projects?|listings?|hi+|hello|hey|namaste|is|there|are|do|does|have)\s+/i;
 const TRAILING_FILLERS = /\s+(projects?|listings?|results?|info|information|details?|rera|please)$/i;
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function stripTrailingPlace(text) {
+  const place = inferPlace(text);
+  if (!place) return text;
+  let cleaned = text;
+  for (const variant of placeVariants(place)) {
+    const re = new RegExp(`\\s+(?:in|near|at|around)\\s+(?:the\\s+)?${escapeRegex(variant)}(?:\\s+area)?\\s*$`, 'i');
+    cleaned = cleaned.replace(re, '').trim();
+  }
+  return cleaned;
+}
 
 function stripSearchFillers(text) {
   let cleaned = String(text || '').replace(/[?.!,]+$/g, '').replace(/\s+/g, ' ').trim();
@@ -223,10 +240,8 @@ function stripSearchFillers(text) {
   do {
     prev = cleaned;
     cleaned = cleaned.replace(LEADING_FILLERS, '').trim();
-  } while (cleaned && cleaned !== prev);
-  do {
-    prev = cleaned;
     cleaned = cleaned.replace(TRAILING_FILLERS, '').trim();
+    cleaned = stripTrailingPlace(cleaned);
   } while (cleaned && cleaned !== prev);
   return cleaned;
 }
@@ -264,6 +279,7 @@ module.exports = {
   matchDistrict,
   stripSearchFillers,
   getDistrictSearchTerms,
+  inferPlace,
   KARNATAKA_DISTRICTS,
   DISTRICT_ALIASES,
   STATUS_KEYWORDS,

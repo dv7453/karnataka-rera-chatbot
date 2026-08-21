@@ -3,6 +3,8 @@
  * Project facts still come from SQLite + hybrid retrieve — never from the model.
  */
 
+const places = require('./places');
+
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const DEFAULT_MODEL = 'qwen/qwen3.6-27b';
 
@@ -10,22 +12,26 @@ const SYSTEM_PROMPT = `You classify messages for a Karnataka RERA project lookup
 The bot ONLY helps with Karnataka RERA real-estate projects: project name, promoter/builder, registration number, Approved/Applied status. It does not do weather, sports, recipes, coding, news, or other topics.
 
 Return ONLY JSON (no markdown):
-{"intent":"greeting"|"help"|"stats"|"verify"|"search"|"off_topic","query":"","searchType":"project"|"promoter"|"place"|"status"|"general","regNo":"","status":""}
+{"intent":"greeting"|"help"|"stats"|"verify"|"search"|"off_topic","query":"","place":"","searchType":"project"|"promoter"|"place"|"status"|"general","regNo":"","status":""}
 
 Rules:
 - Bare hi/hello/hey/namaste with nothing else → greeting.
 - Greeting PLUS a real question about projects → IGNORE the greeting and classify the question (usually search).
 - "Search for Prestige projects" and "hi is there any prestige projects?" MUST both be:
-  intent=search, searchType=project, query="Prestige"
-- Extract only the distinctive lookup term (builder, project, locality). Drop filler: hi, please, any, search, find, give me, locations, projects, in, the.
-- Whitefield, Electronic City, Sarjapur, Hebbal, etc. → search, searchType=place, query=that locality.
-- Builder/developer/company X → searchType=promoter, query=X.
+  intent=search, searchType=project, query="Prestige", place=""
+- Brand AND locality together MUST fill BOTH fields. Examples:
+  "any hiii any prestige projects in white field" → query="Prestige", place="Whitefield", searchType=project
+  "Prestige in Whitefield" → query="Prestige", place="Whitefield"
+  "Sobha projects near Electronic City" → query="Sobha", place="Electronic City", searchType=promoter
+- Place only (no builder/project name) → query="", place="Whitefield", searchType=place
+- Extract distinctive lookup terms. Drop filler: hi, hiii, please, any, search, find, give me, locations, projects, in, the.
+- Normalize "white field" / "whitefield" to place="Whitefield"
 - Show approved/rejected → searchType=status, status=Approved or Applied (we only have those two).
 - help / how to use / what can you do → help
 - stats / how many projects in the database → stats
 - A PRM/KA or ACK/KA registration number → verify, copy it into regNo
 - Completely unrelated → off_topic
-query: 1-6 words, the search key only. Empty string if not a search.`;
+query: brand or project name only. place: locality only. Empty string if missing.`;
 
 function groqEnabled() {
   return Boolean(process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.trim());
@@ -92,10 +98,22 @@ function normalizeClassification(parsed) {
   return {
     intent,
     query: String(parsed.query || '').trim(),
+    place: String(parsed.place || '').trim(),
     searchType: String(parsed.searchType || 'general').toLowerCase(),
     regNo: String(parsed.regNo || '').trim(),
     status: String(parsed.status || '').trim(),
   };
+}
+
+function withPlace(params, place) {
+  if (!place) return params;
+  const brand = String(params.projectName || params.firmName || params.query || '').trim();
+  if (!brand || brand.toLowerCase() !== place.toLowerCase()) {
+    params.place = place;
+  } else {
+    params.place = place;
+  }
+  return params;
 }
 
 function toParserResult(classified, rawMessage) {
@@ -115,20 +133,22 @@ function toParserResult(classified, rawMessage) {
       return { intent: 'OFF_TOPIC', params: {}, raw: rawMessage };
     case 'search': {
       const query = classified.query;
-      if (!query || query.length < 2) return null;
-
+      const place = places.canonicalizePlace(classified.place) || places.inferPlace(rawMessage);
       const type = classified.searchType;
-      if (type === 'promoter') {
-        return { intent: 'SEARCH_PROMOTER', params: { firmName: query }, raw: rawMessage };
+
+      if ((!query || query.length < 2) && !place) return null;
+
+      if (type === 'promoter' && query) {
+        return { intent: 'SEARCH_PROMOTER', params: withPlace({ firmName: query }, place), raw: rawMessage };
       }
       if (type === 'status') {
         const status = classified.status || query;
-        return { intent: 'SEARCH_STATUS', params: { status }, raw: rawMessage };
+        return { intent: 'SEARCH_STATUS', params: withPlace({ status }, place), raw: rawMessage };
       }
-      if (type === 'place') {
-        return { intent: 'GENERAL_SEARCH', params: { query }, raw: rawMessage };
+      if (type === 'place' || (!query && place)) {
+        return { intent: 'GENERAL_SEARCH', params: withPlace({ query: place, place }, place), raw: rawMessage };
       }
-      return { intent: 'SEARCH_PROJECT', params: { projectName: query }, raw: rawMessage };
+      return { intent: 'SEARCH_PROJECT', params: withPlace({ projectName: query }, place), raw: rawMessage };
     }
     default:
       return null;

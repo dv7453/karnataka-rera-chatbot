@@ -19,6 +19,7 @@ const path     = require('path');
 const db          = require('./db/database');
 const parser      = require('./chatbot/queryParser');
 const groqIntent  = require('./chatbot/groqIntent');
+const places      = require('./chatbot/places');
 const httpScraper = require('./scraper/httpScraper');
 const retrieve    = require('./rag/retrieve');
 
@@ -67,6 +68,13 @@ app.post('/api/chat', rateLimit, async (req, res) => {
     const groqClass = await groqIntent.classifyIntent(rawMessage);
     const parsed = groqIntent.toParserResult(groqClass, rawMessage)
       || parser.parseQuery(rawMessage);
+    if (parsed.params && !parsed.params.place) {
+      const inferred = places.inferPlace(rawMessage);
+      const brand = String(parsed.params.projectName || parsed.params.firmName || parsed.params.query || '');
+      if (inferred && inferred.toLowerCase() !== brand.toLowerCase()) {
+        parsed.params.place = inferred;
+      }
+    }
     const { intent, params } = parsed;
 
     let reply;
@@ -237,10 +245,10 @@ function templateShortAnswer(searchValue, projects) {
 
 async function handleHybridSearch(intent, params, rawMessage) {
   const { term, total, rows } = await retrieve.hybridSearch(intent, params, rawMessage);
-  return buildSearchResult(searchTypeForIntent(intent), term, rows, total);
+  return buildSearchResult(searchTypeForIntent(intent), term, rows, total, params.place);
 }
 
-function buildSearchResult(searchType, searchValue, results, totalOverride) {
+function buildSearchResult(searchType, searchValue, results, totalOverride, place) {
   const list = results || [];
   const total = totalOverride != null ? totalOverride : list.length;
 
@@ -250,9 +258,12 @@ function buildSearchResult(searchType, searchValue, results, totalOverride) {
     if (dbTotal === 0) {
       hint = '\n\n⚠️ The database is empty. Run `npm run crawl` to populate it first.';
     }
+    const localityHint = place
+      ? '\n\nLocality is only matched when it appears in the project or promoter name (the district column is empty in the list data).'
+      : '';
     return {
       type: 'text',
-      text: `🔍 No projects found matching **"${searchValue}"**.${hint}\n\nTry a different search term or check for typos.`,
+      text: `🔍 No projects found matching **"${searchValue}"**.${hint}${localityHint}\n\nTry a different search term or check for typos.`,
     };
   }
 
